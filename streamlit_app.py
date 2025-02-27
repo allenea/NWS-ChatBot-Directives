@@ -2,22 +2,33 @@ import os
 import streamlit as st
 import openai
 import nltk
+import tiktoken
 
-# ✅ Fix: Set a writable directory for NLTK data in Streamlit Cloud
+st.write("🚀 App is starting...")  # Debugging message
+
+# ✅ Fix: Set writable directories for caching
+TOKEN_CACHE_PATH = "/tmp/tiktoken_cache"
+LLAMA_CACHE_PATH = "/tmp/llama_index_cache"
 NLTK_DATA_PATH = "/tmp/nltk_data"
-os.environ["NLTK_DATA"] = NLTK_DATA_PATH
-nltk.data.path.append(NLTK_DATA_PATH)
 
-# ✅ Ensure directory exists before downloading
+os.environ["TIKTOKEN_CACHE_DIR"] = TOKEN_CACHE_PATH
+os.environ["LLAMA_INDEX_CACHE_DIR"] = LLAMA_CACHE_PATH
+os.environ["NLTK_DATA"] = NLTK_DATA_PATH
+
+os.makedirs(TOKEN_CACHE_PATH, exist_ok=True)
+os.makedirs(LLAMA_CACHE_PATH, exist_ok=True)
 os.makedirs(NLTK_DATA_PATH, exist_ok=True)
 
-# ✅ Download stopwords manually (avoids permission issues)
+# ✅ Prevent Tiktoken from caching in restricted directories
+tiktoken.TIKTOKEN_CACHE_DIR = TOKEN_CACHE_PATH
+
+# ✅ Fix: Ensure NLTK stopwords are available
 try:
     nltk.data.find("corpora/stopwords")
 except LookupError:
     nltk.download("stopwords", download_dir=NLTK_DATA_PATH, quiet=True)
 
-# ✅ Now import LlamaIndex after setting up NLTK
+# ✅ Now import LlamaIndex after fixing dependencies
 from llama_index.llms.openai import OpenAI
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
 
@@ -34,33 +45,34 @@ st.title("Chat with the NWS Directives")
 # ✅ Ensure OpenAI API key is properly loaded
 if "openai_key" not in st.secrets:
     st.error("⚠️ Missing OpenAI API key! Add it to Streamlit secrets.")
-    st.stop()  # Prevents further execution
+    st.stop()
 else:
     openai.api_key = st.secrets["openai_key"]
 
-# ✅ Initialize chat history
-if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content": "Ask me a question about the NWS Directives!"}
-    ]
+st.write("✅ OpenAI API key loaded successfully!")
+
+# ✅ Check if Directives Folder Exists
+DIRECTIVES_PATH = "./directives"
+if not os.path.exists(DIRECTIVES_PATH):
+    st.error(f"🚨 Error: The `{DIRECTIVES_PATH}` folder is missing! Ensure it exists.")
+    st.stop()
+
+st.write("✅ Directives folder found!")
 
 @st.cache_resource(show_spinner=False)
 def load_data():
     """Load NWS Directives from local directory and create an index."""
-    
-    # ✅ Check if the directives folder exists
-    if not os.path.exists("./directives"):
-        st.error("🚨 Error: 'directives' folder not found! Ensure the NWS Directives are uploaded.")
-        st.stop()
 
-    reader = SimpleDirectoryReader(input_dir="./directives", recursive=True)
+    reader = SimpleDirectoryReader(input_dir=DIRECTIVES_PATH, recursive=True)
     docs = reader.load_data()
-    
+
     if not docs:
         st.error("🚨 No directive documents found! Please check the 'directives' folder.")
         st.stop()
 
-    # ✅ Set up LlamaIndex with OpenAI
+    st.write(f"✅ Loaded {len(docs)} directive documents.")
+
+    # ✅ Use GPT-4o for high accuracy reasoning
     Settings.llm = OpenAI(
         model="gpt-4o",
         temperature=0.2,
@@ -73,7 +85,7 @@ def load_data():
         - Stick to facts; do not hallucinate or make assumptions.
         """,
     )
-    
+
     index = VectorStoreIndex.from_documents(docs)
     return index
 
