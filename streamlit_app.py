@@ -8,6 +8,15 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
+# ✅ Initialize session state variables **before using them**
+if "messages" not in st.session_state:
+    st.session_state.messages = [
+        {"role": "assistant", "content": "Ask me a question about the NWS Directives!"}
+    ]
+
+if "chat_engine" not in st.session_state:
+    st.session_state.chat_engine = None
+
 # ✅ Now import other dependencies
 import os
 import openai
@@ -95,7 +104,7 @@ def load_data():
 index = load_data()
 
 # ✅ Initialize chat engine
-if "chat_engine" not in st.session_state:
+if st.session_state.chat_engine is None:
     st.session_state.chat_engine = index.as_chat_engine(
         chat_mode="condense_question", verbose=True, streaming=True, return_source_nodes=True
     )
