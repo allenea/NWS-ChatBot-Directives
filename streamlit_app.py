@@ -6,7 +6,7 @@ from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
 
 st.set_page_config(page_title="Chat with the NWS Directives, powered by LlamaIndex", page_icon="🦙", layout="centered", initial_sidebar_state="auto", menu_items=None)
 openai.api_key = st.secrets.openai_key
-st.title("Chat with the NWS Directives on Science and Technology")
+st.title("Chat with the NWS Directives")
 # st.info("Check out the full tutorial to build this app in our [blog post](https://blog.streamlit.io/build-a-chatbot-with-custom-data-sources-powered-by-llamaindex/)", icon="📃")
 
 
@@ -14,7 +14,7 @@ if "messages" not in st.session_state.keys():  # Initialize the chat messages hi
    st.session_state.messages = [
        {
            "role": "assistant",
-           "content": "Ask me a question about the NWS Directives on Science and Technology!",
+           "content": "Ask me a question about the NWS Directives!",
        }
    ]
 
@@ -24,15 +24,18 @@ def load_data():
    reader = SimpleDirectoryReader(input_dir="./directives", recursive=True)
    docs = reader.load_data()
    Settings.llm = OpenAI(
-       model="gpt-4o-mini",
+       model="gpt-4o",
        temperature=0.2,
        system_prompt="""You are an expert on
-       the NOAA National Weather Service Directives on Science and Technology and your
+       the NOAA National Weather Service Directives and your
        job is to answer detailed questions.
        Assume that all questions are related
-       to NOAA or the National Weather Service. Keep
-       your answers technical and based on
-       facts – do not hallucinate features.""",
+       to NOAA or the National Weather Service. 
+       Prioritize national directives over regional supplementals,
+       unless specifically asked. You may need clarification about what regional
+       the user is asking about. Pay close attention to works like will, shall, may, should, etc.
+       Keep your answers technical and based on
+       facts - do not hallucinate features.""",
    )
    index = VectorStoreIndex.from_documents(docs)
    return index

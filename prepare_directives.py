@@ -1,75 +1,63 @@
+import os
 import requests
 from bs4 import BeautifulSoup
-import os
-from urllib.parse import urljoin
-import time
 
+# Base URL of the public access link
 
-def get_pdf_links(url):
-   try:
-       response = requests.get(url)
-       response.raise_for_status()
-       soup = BeautifulSoup(response.content, 'html.parser')
-       pdf_links = []
-      
-       # Find all list items
-       list_items = soup.find_all('li')
-      
-       for item in list_items:
-           # Check if the item's text ends with '.pdf'
-           if item.text.strip().lower().endswith('.pdf'):
-               pdf_links.append(item.text.strip())
-      
-       print(f"Found {len(pdf_links)} PDF links on the page.")
-       return pdf_links
-   except requests.exceptions.RequestException as e:
-       print(f"Error fetching the webpage: {e}")
-       return []
+# Create an output directory in the current working directory
+output_dir = os.path.join(os.getcwd(), "directives")
+os.makedirs(output_dir, exist_ok=True)
 
+def download_pdfs(series_str):
+    base_url = f"https://www.weather.gov/directives/{series_str}"
+    try:
+        # Fetch the webpage
+        response = requests.get(base_url)
+        response.raise_for_status()  # Raise an exception for HTTP errors
 
-def download_pdfs(base_url):
-   pdf_links = get_pdf_links(base_url)
-  
-   if not pdf_links:
-       print("No PDF links found on the page.")
-       return
-  
-   # Create 'directives' directory if it doesn't exist
-   directives_dir = 'directives'
-   os.makedirs(directives_dir, exist_ok=True)
+        # Parse the webpage content
+        soup = BeautifulSoup(response.text, "html.parser")
 
+        # Find all links to PDF files
+        pdf_links = soup.find_all("a", href=lambda href: href and href.lower().endswith(".pdf"))
 
-   # Construct the base URL for PDF files
-   pdf_base_url = "https://www.weather.gov/media/directives/080_pdfs_archived/"
+        if not pdf_links:
+            print("No PDFs found on the page.")
+            return
 
+        print(f"Found {len(pdf_links)} PDFs. Starting download...")
 
-   for index, filename in enumerate(pdf_links, start=1):
-       file_url = urljoin(pdf_base_url, filename)
+        # Download each PDF
+        for link in pdf_links:
+            pdf_url = link["href"]
 
+            # Ensure the link is absolute
+            if not pdf_url.startswith("http"):
+                pdf_url = requests.compat.urljoin(base_url, pdf_url)
 
-       try:
-           print(f"Attempting to download {filename} ({index}/{len(pdf_links)})")
-           response = requests.get(file_url)
-           response.raise_for_status()
+            # Check if the URL actually points to a PDF
+            head_response = requests.head(pdf_url, allow_redirects=True)
+            if head_response.headers.get("Content-Type") != "application/pdf":
+                print(f"Skipping non-PDF link: {pdf_url}")
+                continue
 
+            # Get the PDF filename
+            pdf_filename = os.path.join(output_dir, os.path.basename(pdf_url))
 
-           file_path = os.path.join(directives_dir, filename)
-           with open(file_path, 'wb') as file:
-               file.write(response.content)
-          
-           print(f"Successfully downloaded: {filename}")
-          
-           # Add a small delay between downloads
-           time.sleep(1)
+            # Download and save the PDF
+            with requests.get(pdf_url, stream=True) as pdf_response:
+                pdf_response.raise_for_status()
+                with open(pdf_filename, "wb") as pdf_file:
+                    for chunk in pdf_response.iter_content(chunk_size=1024):
+                        pdf_file.write(chunk)
 
+            print(f"Downloaded: {pdf_filename}")
 
-       except requests.exceptions.RequestException as e:
-           print(f"Error downloading {filename}: {e}")
-
+        print("All PDFs have been downloaded successfully.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
-   base_url = "https://www.weather.gov/directives/080-archives-list"
-   print(f"Starting download process from {base_url}")
-   download_pdfs(base_url)
-   print("Download process completed.")
-   print(f"Files should be saved in: {os.getcwd()}/directives")
+  series_list = ["001", "010", "020", "030", "040", "050", "060", "070", "090", "100"]
+  for series_str in series_list:
+    download_pdfs(series_str)
