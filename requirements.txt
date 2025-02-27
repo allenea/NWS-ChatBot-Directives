@@ -1,6 +1,6 @@
-streamlit
-openai
-llama-index
-llama-index-llms-openai
-nltk
-pypdf
+streamlit>=1.42.2
+openai>=1.65.0
+llama-index>=0.12.20
+llama-index-llms-openai>=0.3.22
+nltk>=3.9.1
+pypdf>=5.3.0
