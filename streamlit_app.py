@@ -1,5 +1,15 @@
-import os
 import streamlit as st
+
+# ✅ `st.set_page_config()` MUST be the first Streamlit command
+st.set_page_config(
+    page_title="Chat with the NWS Directives, powered by LlamaIndex",
+    page_icon="🦙",
+    layout="centered",
+    initial_sidebar_state="auto"
+)
+
+# ✅ Now import other dependencies
+import os
 import openai
 import nltk
 import tiktoken
@@ -31,14 +41,6 @@ except LookupError:
 # ✅ Now import LlamaIndex after fixing dependencies
 from llama_index.llms.openai import OpenAI
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
-
-# ✅ Streamlit page settings
-st.set_page_config(
-    page_title="Chat with the NWS Directives, powered by LlamaIndex",
-    page_icon="🦙",
-    layout="centered",
-    initial_sidebar_state="auto"
-)
 
 st.title("Chat with the NWS Directives")
 
