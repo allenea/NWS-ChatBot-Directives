@@ -121,9 +121,12 @@ if st.session_state.messages[-1]["role"] != "assistant":
             # Check if metadata contains a valid source reference
             source_url = "Unknown Source"
             if "file_name" in node.metadata:
-                source_url = f"https://www.weather.gov/directives/{os.path.basename(node.metadata['file_name'])}"
-            elif "source" in node.metadata:
-                source_url = f"https://www.weather.gov/directives/{os.path.basename(node.metadata['source'])}"
+                file_name = os.path.basename(node.metadata["file_name"])
+                
+                # Extract the directive series (e.g., "020" from "pd02001003e042003curr.pdf")
+                series_match = file_name[2:5] if file_name.startswith("pd") and file_name[2:5].isdigit() else None
+                if series_match:
+                    source_url = f"https://www.weather.gov/media/directives/{series_match}_pdfs/{file_name}"
             
             sources.append(f"- [{source_text}...]({source_url})")  # Hyperlink source
 
