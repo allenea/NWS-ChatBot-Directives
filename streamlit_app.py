@@ -82,7 +82,8 @@ def load_data():
         - Assume all questions relate to NOAA or the National Weather Service.
         - Prioritize national directives over regional supplementals unless specifically asked.
         - Be precise with legal wording (e.g., will, shall, may, should).
-        - Always cite the most relevant directive in your answer.
+        - Always cite the most relevant directive(s) in your answer.
+        - Be able to pivot from topic to topic as the user desires.
         - Stick to facts; do not hallucinate or make assumptions.
         """,
     )
@@ -112,6 +113,12 @@ for message in st.session_state.messages:
 if st.session_state.messages[-1]["role"] != "assistant":
     with st.chat_message("assistant"):
         response_stream = st.session_state.chat_engine.stream_chat(prompt)
+        response_text = ""
+        
+        # ✅ Stream response while capturing text
+        for chunk in response_stream.response_gen:
+            response_text += chunk
+            st.write(chunk, end="")
         
         # ✅ Extract sources for citation and format as hyperlinks
         sources = []
@@ -131,14 +138,10 @@ if st.session_state.messages[-1]["role"] != "assistant":
             
             sources.append(f"- [{source_text}...]({source_url})")  # Hyperlink source
 
-        # ✅ Capture and display the response immediately
-        response_text = response_stream.response
-
         # ✅ Append sources at the end (instead of replacing response)
         if sources:
             response_text += "\n\n**Sources:**\n" + "\n".join(sources)
-        
-        st.write(response_text)  # Display response with citations immediately
+            st.write("\n\n**Sources:**\n" + "\n".join(sources))  # Display sources immediately
         
         # ✅ Add response to chat history
         st.session_state.messages.append({"role": "assistant", "content": response_text})
