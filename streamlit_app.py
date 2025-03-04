@@ -117,7 +117,14 @@ if st.session_state.messages[-1]["role"] != "assistant":
         sources = []
         for node in response_stream.source_nodes:
             source_text = node.text[:200]  # Show first 200 characters of the source
-            source_url = f"https://www.weather.gov/directives/{os.path.basename(node.metadata['source'])}"  # Construct directive URL
+            
+            # Check if metadata contains a valid source reference
+            source_url = "Unknown Source"
+            if "file_name" in node.metadata:
+                source_url = f"https://www.weather.gov/directives/{os.path.basename(node.metadata['file_name'])}"
+            elif "source" in node.metadata:
+                source_url = f"https://www.weather.gov/directives/{os.path.basename(node.metadata['source'])}"
+            
             sources.append(f"- [{source_text}...]({source_url})")  # Hyperlink source
 
         # ✅ Capture the response text
