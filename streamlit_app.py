@@ -1,4 +1,10 @@
 import streamlit as st
+import os
+import openai
+import nltk
+import tiktoken
+from llama_index.llms.openai import OpenAI
+from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
 
 # ✅ `st.set_page_config()` MUST be the first Streamlit command
 st.set_page_config(
@@ -16,12 +22,6 @@ if "messages" not in st.session_state:
 
 if "chat_engine" not in st.session_state:
     st.session_state.chat_engine = None
-
-# ✅ Now import other dependencies
-import os
-import openai
-import nltk
-import tiktoken
 
 st.write("🚀 App is starting...")  # Debugging message
 
@@ -47,10 +47,6 @@ try:
 except LookupError:
     nltk.download("stopwords", download_dir=NLTK_DATA_PATH, quiet=True)
 
-# ✅ Now import LlamaIndex after fixing dependencies
-from llama_index.llms.openai import OpenAI
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
-
 st.title("Chat with the NWS Directives")
 
 # ✅ Ensure OpenAI API key is properly loaded
@@ -60,20 +56,15 @@ if "openai_key" not in st.secrets:
 else:
     openai.api_key = st.secrets["openai_key"]
 
-st.write("✅ OpenAI API key loaded successfully!")
-
 # ✅ Check if Directives Folder Exists
 DIRECTIVES_PATH = "./directives"
 if not os.path.exists(DIRECTIVES_PATH):
     st.error(f"🚨 Error: The `{DIRECTIVES_PATH}` folder is missing! Ensure it exists.")
     st.stop()
 
-st.write("✅ Directives folder found!")
-
 @st.cache_resource(show_spinner=False)
 def load_data():
     """Load NWS Directives from local directory and create an index."""
-
     reader = SimpleDirectoryReader(input_dir=DIRECTIVES_PATH, recursive=True)
     docs = reader.load_data()
 
@@ -81,13 +72,12 @@ def load_data():
         st.error("🚨 No directive documents found! Please check the 'directives' folder.")
         st.stop()
 
-    st.write(f"✅ Loaded {len(docs)} directive documents.")
-
     # ✅ Use GPT-4o for high accuracy reasoning
     Settings.llm = OpenAI(
         model="gpt-4o",
         temperature=0.2,
-        system_prompt="""You are an expert on the NOAA National Weather Service Directives.
+        system_prompt="""
+        You are an expert on the NOAA National Weather Service Directives.
         Your job is to answer detailed questions based on official documents.
         - Assume all questions relate to NOAA or the National Weather Service.
         - Prioritize national directives over regional supplementals unless specifically asked.
@@ -123,19 +113,22 @@ if st.session_state.messages[-1]["role"] != "assistant":
     with st.chat_message("assistant"):
         response_stream = st.session_state.chat_engine.stream_chat(prompt)
         
-        # ✅ Extract sources for citation
+        # ✅ Extract sources for citation and format as hyperlinks
         sources = []
         for node in response_stream.source_nodes:
             source_text = node.text[:200]  # Show first 200 characters of the source
-            sources.append(f"- {source_text}...")
+            source_url = f"https://www.weather.gov/directives/{os.path.basename(node.metadata['source'])}"  # Construct directive URL
+            sources.append(f"- [{source_text}...]({source_url})")  # Hyperlink source
 
-        # ✅ Append sources to response
+        # ✅ Capture the response text
         response_text = response_stream.response
+
+        # ✅ Append sources at the end (instead of replacing response)
         if sources:
             response_text += "\n\n**Sources:**\n" + "\n".join(sources)
 
-        # ✅ Display response
+        # ✅ Display response while streaming
         st.write_stream(response_stream.response_gen)
-        
+
         # ✅ Add response to chat history
         st.session_state.messages.append({"role": "assistant", "content": response_text})
