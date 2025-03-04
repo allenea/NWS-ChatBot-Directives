@@ -114,9 +114,11 @@ if st.session_state.messages[-1]["role"] != "assistant":
         response_stream = st.session_state.chat_engine.stream_chat(prompt)
         response_text = "".join(response_stream.response_gen)  # Collect full response before displaying
         
-        # ✅ Extract sources for citation and format as hyperlinks
+        # ✅ Extract relevant sources for citation
         sources = []
-        max_sources = 5  # Limit the number of citations
+        max_sources = 3  # Limit to most relevant citations
+        seen_sources = set()  # Avoid duplicate citations
+        
         for node in response_stream.source_nodes[:max_sources]:
             source_text = node.text[:200]  # Show first 200 characters of the source
             
@@ -130,7 +132,10 @@ if st.session_state.messages[-1]["role"] != "assistant":
                 if series_match:
                     source_url = f"https://www.weather.gov/media/directives/{series_match}_pdfs/{file_name}"
             
-            sources.append(f"- [{source_text}...]({source_url})")  # Hyperlink source
+            # Ensure unique sources only
+            if source_url not in seen_sources:
+                sources.append(f"- [{source_text}...]({source_url})")  # Hyperlink source
+                seen_sources.add(source_url)
 
         # ✅ Append sources at the end (instead of replacing response)
         if sources:
