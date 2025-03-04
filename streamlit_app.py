@@ -115,7 +115,8 @@ if st.session_state.messages[-1]["role"] != "assistant":
         
         # ✅ Extract sources for citation and format as hyperlinks
         sources = []
-        for node in response_stream.source_nodes:
+        max_sources = 5  # Limit the number of citations
+        for node in response_stream.source_nodes[:max_sources]:
             source_text = node.text[:200]  # Show first 200 characters of the source
             
             # Check if metadata contains a valid source reference
@@ -130,15 +131,14 @@ if st.session_state.messages[-1]["role"] != "assistant":
             
             sources.append(f"- [{source_text}...]({source_url})")  # Hyperlink source
 
-        # ✅ Capture the response text
+        # ✅ Capture and display the response immediately
         response_text = response_stream.response
 
         # ✅ Append sources at the end (instead of replacing response)
         if sources:
             response_text += "\n\n**Sources:**\n" + "\n".join(sources)
-
-        # ✅ Display response while streaming
-        st.write_stream(response_stream.response_gen)
-
+        
+        st.write(response_text)  # Display response with citations immediately
+        
         # ✅ Add response to chat history
         st.session_state.messages.append({"role": "assistant", "content": response_text})
