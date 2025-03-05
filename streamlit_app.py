@@ -3,7 +3,7 @@ import os
 import openai
 from llama_index.llms.openai import OpenAI
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
-from nws_options import NWS_OFFICES, NWS_REGIONS  # Import from your NWS options file
+from nws_options import NWS_OFFICES, NWS_REGIONS  # Import NWS options
 
 # ✅ Set Streamlit page configuration
 st.set_page_config(
@@ -14,8 +14,6 @@ st.set_page_config(
 )
 
 # ✅ Initialize session state variables
-if "user_office" not in st.session_state:
-    st.session_state.user_office = None
 if "user_region" not in st.session_state:
     st.session_state.user_region = None
 if "messages" not in st.session_state:
@@ -24,6 +22,8 @@ if "messages" not in st.session_state:
     ]
 if "chat_engine" not in st.session_state:
     st.session_state.chat_engine = None
+if "user_region_changed" not in st.session_state:
+    st.session_state.user_region_changed = False  # Track if the region has changed
 
 # ✅ Ensure OpenAI API key is properly loaded
 if "openai_key" not in st.secrets:
@@ -53,9 +53,9 @@ def load_all_directives():
 # ✅ Load full dataset once
 all_docs = load_all_directives()
 
-# ✅ Office/Region Selection UI
+# ✅ Region Selection UI
 st.title("Welcome to the NWS Directives Chatbot")
-st.write("Before we begin, please select your **NWS Office** or **Region**.")
+st.write("Before we begin, please select your **NWS Region**.")
 
 selected_region = st.selectbox(
     "Select your NWS Region:",
@@ -63,30 +63,17 @@ selected_region = st.selectbox(
     index=0 if not st.session_state.user_region else list(NWS_REGIONS.values()).index(st.session_state.user_region) + 1,
 )
 
-filtered_offices = [office for office, region in NWS_OFFICES.items() if region == selected_region] if selected_region else list(NWS_OFFICES.keys())
-
-selected_office = st.selectbox(
-    "Select your NWS Office:",
-    [""] + filtered_offices,
-    index=0 if not st.session_state.user_office else filtered_offices.index(st.session_state.user_office) + 1 if st.session_state.user_office in filtered_offices else 0,
-)
-
-if selected_office:
-    st.session_state.user_office = selected_office
-    st.session_state.user_region = NWS_OFFICES[selected_office]
-
-if selected_region:
+# ✅ Detect if the region has changed
+if selected_region and selected_region != st.session_state.user_region:
     st.session_state.user_region = selected_region
-    st.session_state.user_office = None  # Reset office to prevent mismatches
+    st.session_state.user_region_changed = True  # Set flag to rebuild the chat engine
 
-if st.session_state.user_office:
-    st.write(f"✅ Selected Office: **{st.session_state.user_office}**")
 if st.session_state.user_region:
     st.write(f"✅ Selected Region: **{st.session_state.user_region}**")
 
 # ✅ Prevent chat from loading until a region is selected
 if not st.session_state.user_region:
-    st.warning("🚨 Please select your NWS Office or Region to continue.")
+    st.warning("🚨 Please select your NWS Region to continue.")
     st.stop()
 
 # ✅ Function to filter relevant directives
@@ -95,46 +82,64 @@ def get_filtered_documents(region):
     national_docs = [doc for doc in all_docs if "National" in doc.metadata.get("region", "")]
     regional_docs = [doc for doc in all_docs if region in doc.metadata.get("region", "")]
 
-    return national_docs + regional_docs  # Keep national + relevant regional docs
+    if not regional_docs:
+        st.warning(f"⚠️ No region-specific directives found for **{region}**. Using only national directives.")
 
-# ✅ Ensure chat engine updates dynamically
-filtered_docs = get_filtered_documents(st.session_state.user_region)
+    return national_docs + regional_docs  # Ensure national directives are always included
 
-# ✅ OpenAI Model Setup with System Prompt
-Settings.llm = OpenAI(
-    model="gpt-4o",
-    temperature=0.2,
-    system_prompt=f"""
-        You are an expert on the NOAA National Weather Service (NWS) Directives. Your role is to provide
-        accurate and detailed answers strictly based on official NWS and NOAA directives.
+def build_chat_engine(region, office):
+    """Create a new chat engine with the correct system prompt every time the region/office changes."""
+    filtered_docs = get_filtered_documents(region)  # Always filter docs correctly
 
-        You are assisting users from **{st.session_state.user_region}**, particularly **{st.session_state.user_office if st.session_state.user_office else 'multiple offices'}**.
-        Always tailor responses to their relevant directives.
+    # ✅ Ensure office is always provided
+    if not office:
+        st.error("🚨 Office selection is required! Please select an office.")
+        st.stop()
 
-        Guidelines for Responses:
-        1. **Scope of Inquiry**:
-           - Assume all questions pertain to NOAA or the National Weather Service.
-        
-        2. **Directive Prioritization**:
-           - Prioritize **national directives** over regional supplementals unless specifically asked.
-           - When citing regional supplementals, ensure they belong to the **same series and number** as the relevant national directive.
+    # ✅ Create a NEW OpenAI object with the correct system prompt
+    llm = OpenAI(
+        model="gpt-4o",
+        temperature=0.2,
+        system_prompt=f"""
+            You are an expert on the NOAA National Weather Service (NWS) Directives. Your role is to provide
+            accurate and detailed answers strictly based on official NWS and NOAA directives.
 
-        3. **Legal Precision**:
-           - Use **exact legal wording** as written in the directives (e.g., "will," "shall," "may," "should").
-           - Do not interpret or modify directive language beyond what is explicitly stated.
+            You are assisting users from **{region}**, specifically **{office}**.
+            Always tailor responses to their relevant directives.
 
-        4. **Fact-Based Responses**:
-           - Stick strictly to **documented facts**; do not hallucinate or make assumptions.
-           - Always cite the **most relevant directives** when providing an answer.
+            Guidelines for Responses:
+            1. **Scope of Inquiry**:
+               - Assume all questions pertain to NOAA or the National Weather Service.
+            
+            2. **Directive Prioritization**:
+               - Prioritize **national directives** over regional supplementals unless specifically asked.
+               - When citing regional supplementals, ensure they belong to the **same series and number** as the relevant national directive.
 
-        Ensure clarity, accuracy, and completeness in every response.
-    """,
-)
+            3. **Legal Precision**:
+               - Use **exact legal wording** as written in the directives (e.g., "will," "shall," "may," "should").
+               - Do not interpret or modify directive language beyond what is explicitly stated.
 
-# ✅ Set up the chat engine
-st.session_state.chat_engine = VectorStoreIndex.from_documents(filtered_docs).as_chat_engine(
-    chat_mode="condense_question", verbose=True, streaming=True, return_source_nodes=True
-)
+            4. **Fact-Based Responses**:
+               - Stick strictly to **documented facts**; do not hallucinate or make assumptions.
+               - Always cite the **most relevant directives** when providing an answer.
+
+            Ensure clarity, accuracy, and completeness in every response.
+        """,
+    )
+
+    # ✅ Build a NEW chat engine every time with updated docs and prompt
+    return VectorStoreIndex.from_documents(filtered_docs).as_chat_engine(
+        llm=llm,  # Use the newly created LLM object with the correct prompt
+        chat_mode="condense_question",
+        verbose=True,
+        streaming=True,
+        return_source_nodes=True,
+    )
+
+# ✅ Force system prompt update whenever user changes region
+if "chat_engine" not in st.session_state or st.session_state.user_region_changed:
+    st.session_state.chat_engine = build_chat_engine(st.session_state.user_region)
+    st.session_state.user_region_changed = False  # Reset change flag
 
 st.write("---")
 st.title("Chat with the NWS Directives")
@@ -153,8 +158,12 @@ for message in st.session_state.messages:
 if st.session_state.messages[-1]["role"] != "assistant":
     with st.chat_message("assistant"):
         response_stream = st.session_state.chat_engine.stream_chat(prompt)
-        response_text = "".join(response_stream.response_gen)  # Collect full response before displaying
-        
+        response_text = "".join(response_stream.response_gen).strip()
+
+        # ✅ Handle empty responses gracefully
+        if not response_text:
+            response_text = "⚠️ Sorry, I couldn't find relevant information. Try rewording your question."
+
         # ✅ Extract relevant sources for citation
         sources = []
         max_sources = 3  # Limit to most relevant citations
