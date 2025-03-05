@@ -48,22 +48,40 @@ def load_all_directives():
     st.write("🔄 Loading all NWS Directives...")
 
     try:
+        if not os.path.exists(DIRECTIVES_PATH):
+            st.error(f"🚨 The directives folder `{DIRECTIVES_PATH}` does not exist!")
+            return None, None
+
+        # ✅ List all files
+        try:
+            files = os.listdir(DIRECTIVES_PATH)
+            if not files:
+                st.error("🚨 The directives folder is empty!")
+                return None, None
+            st.write(f"📂 Found {len(files)} files in `{DIRECTIVES_PATH}`.")
+        except Exception as e:
+            st.error(f"🚨 Failed to list files in `{DIRECTIVES_PATH}`: {str(e)}")
+            return None, None
+
+        # ✅ Load all documents
         reader = SimpleDirectoryReader(input_dir=DIRECTIVES_PATH, recursive=True)
         all_docs = reader.load_data()
 
         if not all_docs:
-            st.error("🚨 No directive documents found! Please check the 'directives' folder.")
+            st.error("🚨 No directive documents were successfully loaded! Please check file format.")
             return None, None
 
-        # ✅ Ensure classification rules document is loaded first
+        st.write(f"📄 Successfully loaded {len(all_docs)} directive documents.")
+
+        # ✅ Look for classification document
         classification_doc = next((doc for doc in all_docs if "pd00101001curr.pdf" in doc.metadata.get("file_path", "")), None)
 
         if classification_doc:
-            st.write("✅ Classification rules for regional supplementals loaded successfully!")
+            st.write("✅ Classification rules for regional supplementals detected!")
         else:
             st.warning("⚠️ Could not find 'pd00101001curr.pdf'. Ensure it exists in the directives folder!")
 
-        # ✅ Build the index and handle errors
+        # ✅ Build the index
         try:
             index = VectorStoreIndex.from_documents(all_docs)
             st.write(f"✅ Successfully indexed {len(all_docs)} documents.")
