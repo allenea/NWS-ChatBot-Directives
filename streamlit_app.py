@@ -5,8 +5,9 @@ import nltk
 import tiktoken
 from llama_index.llms.openai import OpenAI
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
+from nws_options import NWS_OFFICES, NWS_REGIONS  # Import from your NWS options file
 
-# ✅ `st.set_page_config()` MUST be the first Streamlit command
+# ✅ Set Streamlit page configuration
 st.set_page_config(
     page_title="Chat with the NWS Directives, powered by LlamaIndex",
     page_icon="🦙",
@@ -15,39 +16,51 @@ st.set_page_config(
 )
 
 # ✅ Initialize session state variables **before using them**
+if "user_office" not in st.session_state:
+    st.session_state.user_office = None
+if "user_region" not in st.session_state:
+    st.session_state.user_region = None
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {"role": "assistant", "content": "Ask me a question about the NWS Directives!"}
     ]
-
 if "chat_engine" not in st.session_state:
     st.session_state.chat_engine = None
 
-st.write("🚀 App is starting...")  # Debugging message
+st.title("Welcome to the NWS Directives Chatbot")
+st.write("Before we begin, please select your **NWS Office** or **Region**.")
 
-# ✅ Fix: Set writable directories for caching
-TOKEN_CACHE_PATH = "/tmp/tiktoken_cache"
-LLAMA_CACHE_PATH = "/tmp/llama_index_cache"
-NLTK_DATA_PATH = "/tmp/nltk_data"
+# ✅ Dropdown to select region
+selected_region = st.selectbox(
+    "Select your NWS Region:",
+    [""] + list(NWS_REGIONS.values()),  # Allow an empty default option
+    index=0 if not st.session_state.user_region else list(NWS_REGIONS.values()).index(st.session_state.user_region) + 1,
+)
 
-os.environ["TIKTOKEN_CACHE_DIR"] = TOKEN_CACHE_PATH
-os.environ["LLAMA_INDEX_CACHE_DIR"] = LLAMA_CACHE_PATH
-os.environ["NLTK_DATA"] = NLTK_DATA_PATH
+# ✅ Filter offices based on selected region (or show all if none selected)
+filtered_offices = [office for office, region in NWS_OFFICES.items() if region == selected_region] if selected_region else list(NWS_OFFICES.keys())
 
-os.makedirs(TOKEN_CACHE_PATH, exist_ok=True)
-os.makedirs(LLAMA_CACHE_PATH, exist_ok=True)
-os.makedirs(NLTK_DATA_PATH, exist_ok=True)
+# ✅ Dropdown to select office
+selected_office = st.selectbox(
+    "Select your NWS Office:",
+    [""] + filtered_offices,  # Allow an empty default option
+    index=0 if not st.session_state.user_office else filtered_offices.index(st.session_state.user_office) + 1 if st.session_state.user_office in filtered_offices else 0,
+)
 
-# ✅ Prevent Tiktoken from caching in restricted directories
-tiktoken.TIKTOKEN_CACHE_DIR = TOKEN_CACHE_PATH
+# ✅ Update selections dynamically
+if selected_office:
+    st.session_state.user_office = selected_office
+    st.session_state.user_region = NWS_OFFICES[selected_office]  # Auto-set the region based on office
 
-# ✅ Fix: Ensure NLTK stopwords are available
-try:
-    nltk.data.find("corpora/stopwords")
-except LookupError:
-    nltk.download("stopwords", download_dir=NLTK_DATA_PATH, quiet=True)
+if selected_region:
+    st.session_state.user_region = selected_region
+    st.session_state.user_office = None  # Reset office selection to prevent mismatch
 
-st.title("Chat with the NWS Directives")
+# ✅ Display selected information
+if st.session_state.user_office:
+    st.write(f"✅ Selected Office: **{st.session_state.user_office}**")
+if st.session_state.user_region:
+    st.write(f"✅ Selected Region: **{st.session_state.user_region}**")
 
 # ✅ Ensure OpenAI API key is properly loaded
 if "openai_key" not in st.secrets:
@@ -56,12 +69,18 @@ if "openai_key" not in st.secrets:
 else:
     openai.api_key = st.secrets["openai_key"]
 
-# ✅ Check if Directives Folder Exists
+# ✅ Prevent chat from loading until an office or region is selected
+if not st.session_state.user_office and not st.session_state.user_region:
+    st.warning("🚨 Please select your NWS Office or Region to continue.")
+    st.stop()
+
+# ✅ Directives folder path
 DIRECTIVES_PATH = "./directives"
 if not os.path.exists(DIRECTIVES_PATH):
     st.error(f"🚨 Error: The `{DIRECTIVES_PATH}` folder is missing! Ensure it exists.")
     st.stop()
 
+# ✅ Load and cache directive data
 @st.cache_resource(show_spinner=False)
 def load_data():
     """Load NWS Directives from local directory and create an index."""
@@ -72,11 +91,11 @@ def load_data():
         st.error("🚨 No directive documents found! Please check the 'directives' folder.")
         st.stop()
 
-    # ✅ Use GPT-4o for high accuracy reasoning
+    # ✅ Use GPT-4o for high-accuracy reasoning
     Settings.llm = OpenAI(
         model="gpt-4o",
         temperature=0.2,
-        system_prompt = """
+        system_prompt="""
             You are an expert on the NOAA National Weather Service (NWS) Directives. Your role is to provide
             accurate and detailed answers strictly based on official NWS and NOAA directives.
 
@@ -94,7 +113,7 @@ def load_data():
 
             4. Fact-Based Responses:
             - Stick strictly to documented facts; do not hallucinate or make assumptions.
-            - Always cite the most relevant directives when providing an answer. If you aren't sure. Don't cite it.
+            - Always cite the most relevant directives when providing an answer. If you aren't sure, don't cite it.
 
             Ensure clarity, accuracy, and completeness in every response.""",
     )
@@ -102,7 +121,7 @@ def load_data():
     index = VectorStoreIndex.from_documents(docs)
     return index
 
-# ✅ Load index (only if data is available)
+# ✅ Load index
 index = load_data()
 
 # ✅ Initialize chat engine
@@ -126,42 +145,35 @@ if st.session_state.messages[-1]["role"] != "assistant":
         response_stream = st.session_state.chat_engine.stream_chat(prompt)
         response_text = "".join(response_stream.response_gen)  # Collect full response before displaying
         
-        # ✅ Extract and format citations separately
+        # ✅ Extract relevant sources for citation
         sources = []
         max_sources = 3  # Limit to most relevant citations
         seen_sources = set()  # Avoid duplicate citations
-
+        
         for node in response_stream.source_nodes[:max_sources]:
-            source_text = node.text.strip()  # Remove leading/trailing spaces
+            source_text = node.text.strip()
 
-            # ✅ Skip empty or irrelevant citations
+            # ✅ Skip blank pages or irrelevant citations
             if not source_text or "This page intentionally left blank" in source_text:
-                continue  # Ignore blank pages
-
-            # ✅ Extract a meaningful excerpt (avoid grabbing empty or filler text)
-            source_excerpt = source_text[:200].strip()
-            if len(source_excerpt) < 20:  # Ensure it's not too short to be useful
                 continue
 
-            # ✅ Check if metadata contains a valid source reference
+            source_excerpt = source_text[:200].strip()
+            if len(source_excerpt) < 20:
+                continue
+
             source_url = "Unknown Source"
             if "file_name" in node.metadata:
                 file_name = os.path.basename(node.metadata["file_name"])
-
-                # Extract the directive series (e.g., "020" from "pd02001003e042003curr.pdf")
                 series_match = file_name[2:5] if file_name.startswith("pd") and file_name[2:5].isdigit() else None
                 if series_match:
                     source_url = f"https://www.weather.gov/media/directives/{series_match}_pdfs/{file_name}"
 
-            # ✅ Ensure unique sources only
             if source_url not in seen_sources:
-                sources.append(f"- [{source_excerpt}...]({source_url})")  # Hyperlink source
+                sources.append(f"- [{source_excerpt}...]({source_url})")
                 seen_sources.add(source_url)
 
-        # ✅ Append sources at the end of the displayed response
         if sources:
-            citations_text = "\n\n**Sources:**\n" + "\n".join(sources)
-            message_placeholder.write(response_text + citations_text)
+            response_text += "\n\n**Sources:**\n" + "\n".join(sources)
 
-        # ✅ Add response to chat history
-        st.session_state.messages.append({"role": "assistant", "content": response_text + (citations_text if sources else "")})
+        st.write(response_text)
+        st.session_state.messages.append({"role": "assistant", "content": response_text})
