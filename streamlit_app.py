@@ -89,28 +89,52 @@ if not st.session_state.user_region:
     st.warning("🚨 Please select your NWS Office or Region to continue.")
     st.stop()
 
-# ✅ Filter directives dynamically based on selected region
-@st.cache_resource(show_spinner=False)
-def get_filtered_index(region):
-    """Filter out only relevant regional supplementals while keeping national directives."""
+# ✅ Function to filter relevant directives
+def get_filtered_documents(region):
+    """Return only national directives + regional supplementals for the selected region."""
     national_docs = [doc for doc in all_docs if "National" in doc.metadata.get("region", "")]
     regional_docs = [doc for doc in all_docs if region in doc.metadata.get("region", "")]
 
-    combined_docs = national_docs + regional_docs  # Keep national directives + region-specific supplementals
+    return national_docs + regional_docs  # Keep national + relevant regional docs
 
-    if not regional_docs:
-        st.warning(f"⚠️ No region-specific directives found for **{region}**. Only national directives will be used.")
+# ✅ Ensure chat engine updates dynamically
+filtered_docs = get_filtered_documents(st.session_state.user_region)
 
-    return VectorStoreIndex.from_documents(combined_docs)
+# ✅ OpenAI Model Setup with System Prompt
+Settings.llm = OpenAI(
+    model="gpt-4o",
+    temperature=0.2,
+    system_prompt=f"""
+        You are an expert on the NOAA National Weather Service (NWS) Directives. Your role is to provide
+        accurate and detailed answers strictly based on official NWS and NOAA directives.
 
-# ✅ Load the filtered index based on selected region
-filtered_index = get_filtered_index(st.session_state.user_region)
+        You are assisting users from **{st.session_state.user_region}**, particularly **{st.session_state.user_office if st.session_state.user_office else 'multiple offices'}**.
+        Always tailor responses to their relevant directives.
 
-# ✅ Initialize chat engine only if not set
-if st.session_state.chat_engine is None:
-    st.session_state.chat_engine = filtered_index.as_chat_engine(
-        chat_mode="condense_question", verbose=True, streaming=True, return_source_nodes=True
-    )
+        Guidelines for Responses:
+        1. **Scope of Inquiry**:
+           - Assume all questions pertain to NOAA or the National Weather Service.
+        
+        2. **Directive Prioritization**:
+           - Prioritize **national directives** over regional supplementals unless specifically asked.
+           - When citing regional supplementals, ensure they belong to the **same series and number** as the relevant national directive.
+
+        3. **Legal Precision**:
+           - Use **exact legal wording** as written in the directives (e.g., "will," "shall," "may," "should").
+           - Do not interpret or modify directive language beyond what is explicitly stated.
+
+        4. **Fact-Based Responses**:
+           - Stick strictly to **documented facts**; do not hallucinate or make assumptions.
+           - Always cite the **most relevant directives** when providing an answer.
+
+        Ensure clarity, accuracy, and completeness in every response.
+    """,
+)
+
+# ✅ Set up the chat engine
+st.session_state.chat_engine = VectorStoreIndex.from_documents(filtered_docs).as_chat_engine(
+    chat_mode="condense_question", verbose=True, streaming=True, return_source_nodes=True
+)
 
 st.write("---")
 st.title("Chat with the NWS Directives")
