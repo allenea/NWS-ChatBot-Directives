@@ -77,7 +77,8 @@ def load_data():
         model="gpt-4o",
         temperature=0.2,
         system_prompt = """
-            You are an expert on the NOAA National Weather Service (NWS) Directives. Your role is to provide accurate and detailed answers strictly based on official NWS and NOAA directives.
+            You are an expert on the NOAA National Weather Service (NWS) Directives. Your role is to provide
+            accurate and detailed answers strictly based on official NWS and NOAA directives.
 
             Guidelines for Responses:
             1. Scope of Inquiry:
@@ -93,7 +94,7 @@ def load_data():
 
             4. Fact-Based Responses:
             - Stick strictly to documented facts; do not hallucinate or make assumptions.
-            - Always cite the most relevant directive when providing an answer.
+            - Always cite the most relevant directives when providing an answer. If you aren't sure. Don't cite it.
 
             Ensure clarity, accuracy, and completeness in every response.""",
     )
@@ -125,35 +126,42 @@ if st.session_state.messages[-1]["role"] != "assistant":
         response_stream = st.session_state.chat_engine.stream_chat(prompt)
         response_text = "".join(response_stream.response_gen)  # Collect full response before displaying
         
-        # ✅ Extract relevant sources for citation
+        # ✅ Extract and format citations separately
         sources = []
         max_sources = 3  # Limit to most relevant citations
         seen_sources = set()  # Avoid duplicate citations
-        
+
         for node in response_stream.source_nodes[:max_sources]:
-            source_text = node.text[:200]  # Show first 200 characters of the source
-            
-            # Check if metadata contains a valid source reference
+            source_text = node.text.strip()  # Remove leading/trailing spaces
+
+            # ✅ Skip empty or irrelevant citations
+            if not source_text or "This page intentionally left blank" in source_text:
+                continue  # Ignore blank pages
+
+            # ✅ Extract a meaningful excerpt (avoid grabbing empty or filler text)
+            source_excerpt = source_text[:200].strip()
+            if len(source_excerpt) < 20:  # Ensure it's not too short to be useful
+                continue
+
+            # ✅ Check if metadata contains a valid source reference
             source_url = "Unknown Source"
             if "file_name" in node.metadata:
                 file_name = os.path.basename(node.metadata["file_name"])
-                
+
                 # Extract the directive series (e.g., "020" from "pd02001003e042003curr.pdf")
                 series_match = file_name[2:5] if file_name.startswith("pd") and file_name[2:5].isdigit() else None
                 if series_match:
                     source_url = f"https://www.weather.gov/media/directives/{series_match}_pdfs/{file_name}"
-            
-            # Ensure unique sources only
+
+            # ✅ Ensure unique sources only
             if source_url not in seen_sources:
-                sources.append(f"- [{source_text}...]({source_url})")  # Hyperlink source
+                sources.append(f"- [{source_excerpt}...]({source_url})")  # Hyperlink source
                 seen_sources.add(source_url)
 
-        # ✅ Append sources at the end (instead of replacing response)
+        # ✅ Append sources at the end of the displayed response
         if sources:
-            response_text += "\n\n**Sources:**\n" + "\n".join(sources)
-        
-        # ✅ Display full response once fully generated
-        st.write(response_text)
-        
+            citations_text = "\n\n**Sources:**\n" + "\n".join(sources)
+            message_placeholder.write(response_text + citations_text)
+
         # ✅ Add response to chat history
-        st.session_state.messages.append({"role": "assistant", "content": response_text})
+        st.session_state.messages.append({"role": "assistant", "content": response_text + (citations_text if sources else "")})
