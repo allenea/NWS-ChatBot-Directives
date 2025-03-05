@@ -101,6 +101,9 @@ def get_filtered_documents(region):
     national_docs = [doc for doc in all_docs if "National" in doc.metadata.get("region", "")]
     regional_docs = [doc for doc in all_docs if region in doc.metadata.get("region", "")]
 
+    # ✅ Debugging output
+    st.write(f"📄 Loaded {len(national_docs)} national directives and {len(regional_docs)} regional directives for {region}")
+
     if not regional_docs:
         st.warning(f"⚠️ No region-specific directives found for **{region}**. Using only national directives.")
 
@@ -111,38 +114,40 @@ def build_chat_engine(region, office):
     """Create a new chat engine with the correct system prompt when the region/office changes."""
     filtered_docs = get_filtered_documents(region)
 
-    # ✅ Create a NEW OpenAI object with the correct system prompt
+    if not filtered_docs:
+        st.error("🚨 No documents found! Chat engine cannot be built.")
+        st.stop()
+
+    # ✅ Debugging output
+    st.write(f"🔍 Chat engine is being built with {len(filtered_docs)} documents for {office}")
+
+    # ✅ Define system prompt in a clean, structured format
+    system_prompt = f"""
+        You are an expert on the NOAA National Weather Service (NWS) Directives. Your role is to provide
+        accurate and detailed answers based strictly on official NWS and NOAA directives.
+
+        You are assisting users from {region}, specifically {office}. Your answers must be relevant to their
+        region and office.
+
+        Guidelines:
+        1. Assume all questions relate to NOAA or the National Weather Service.
+        2. Prioritize national directives, add additional context from associated regional supplementals unless 
+           specifically asked about the national directive or regional supplemental.
+        3. When citing regional supplementals, ensure they belong to the same series and number as the 
+           relevant national directive.
+        4. Use precise legal wording as written in the directives (e.g., "will," "shall," "may," "should").
+        5. Do not interpret or modify directive language beyond what is explicitly stated.
+        6. Always cite the most relevant directive in responses.
+        7. Stick strictly to documented facts; do not make assumptions. Do not hallucinate.
+    """
+
+    # ✅ Create a NEW OpenAI object with the corrected system prompt
     llm = OpenAI(
         model="gpt-4o",
         temperature=0.2,
-        system_prompt=f"""
-            You are an expert on the NOAA National Weather Service (NWS) Directives. Your role is to provide
-            accurate and detailed answers strictly based on official NWS and NOAA directives.
-
-            You are assisting users from **{region}**, specifically **{office}**.
-            Always tailor responses to their relevant directives.
-
-            Guidelines for Responses:
-            1. **Scope of Inquiry**:
-               - Assume all questions pertain to NOAA or the National Weather Service.
-            
-            2. **Directive Prioritization**:
-               - Prioritize **national directives** over regional supplementals unless specifically asked.
-               - When citing regional supplementals, ensure they belong to the **same series and number** as the relevant national directive.
-
-            3. **Legal Precision**:
-               - Use **exact legal wording** as written in the directives (e.g., "will," "shall," "may," "should").
-               - Do not interpret or modify directive language beyond what is explicitly stated.
-
-            4. **Fact-Based Responses**:
-               - Stick strictly to **documented facts**; do not hallucinate or make assumptions.
-               - Always cite the **most relevant directives** when providing an answer.
-
-            Ensure clarity, accuracy, and completeness in every response.
-        """,
+        system_prompt=system_prompt,
     )
 
-    # ✅ Build a NEW chat engine every time with updated docs and prompt
     return VectorStoreIndex.from_documents(filtered_docs).as_chat_engine(
         llm=llm,
         chat_mode="condense_question",

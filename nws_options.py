@@ -1,6 +1,6 @@
 NWS_REGIONS = {"AR": "Alaska Region", "CR": "Central Region", "ER": "Eastern Region",
                "PR": "Pacific Region", "SR": "Southern Region", "WR": "Western Region",
-               "NCEP":"National", "HQ":"National"}
+               "HQ/NCEP":"National",}
 
 NWS_OFFICES = {'ABR - WFO ABERDEEN': 'Central Region',
                'ABRFC - ARKANSAS-RED BASIN (TULSA) RFC': 'Southern Region',
