@@ -45,30 +45,47 @@ if not os.path.exists(DIRECTIVES_PATH):
 @st.cache_resource(show_spinner=False)
 def load_all_directives():
     """Load all NWS Directives and store classification rules separately."""
-    reader = SimpleDirectoryReader(input_dir=DIRECTIVES_PATH, recursive=True)
-    
-    all_docs = reader.load_data()
+    st.write("🔄 Loading all NWS Directives...")
 
-    # ✅ Ensure classification rules document is loaded first
-    classification_doc = next((doc for doc in all_docs if "pd00101001curr.pdf" in doc.metadata.get("file_path", "")), None)
+    try:
+        reader = SimpleDirectoryReader(input_dir=DIRECTIVES_PATH, recursive=True)
+        all_docs = reader.load_data()
 
-    if classification_doc:
-        st.write("✅ Classification rules for regional supplementals loaded successfully!")
-    else:
-        st.error("🚨 Could not find 'pd00101001curr.pdf'. Ensure it exists in the directives folder!")
+        if not all_docs:
+            st.error("🚨 No directive documents found! Please check the 'directives' folder.")
+            return None, None
 
-    if not all_docs:
-        st.error("🚨 No directive documents found! Please check the 'directives' folder.")
-        st.stop()
+        # ✅ Ensure classification rules document is loaded first
+        classification_doc = next((doc for doc in all_docs if "pd00101001curr.pdf" in doc.metadata.get("file_path", "")), None)
 
-    # ✅ Build the index once and store it persistently
-    index = VectorStoreIndex.from_documents(all_docs)
+        if classification_doc:
+            st.write("✅ Classification rules for regional supplementals loaded successfully!")
+        else:
+            st.warning("⚠️ Could not find 'pd00101001curr.pdf'. Ensure it exists in the directives folder!")
 
-    return index, classification_doc
+        # ✅ Build the index and handle errors
+        try:
+            index = VectorStoreIndex.from_documents(all_docs)
+            st.write(f"✅ Successfully indexed {len(all_docs)} documents.")
+        except Exception as e:
+            st.error(f"🚨 Error creating the document index: {str(e)}")
+            return None, None
+
+        return index, classification_doc
+
+    except Exception as e:
+        st.error(f"🚨 Unexpected error while loading directives: {str(e)}")
+        return None, None
 
 # ✅ Load directives once and store them
 if "index" not in st.session_state or "classification_doc" not in st.session_state:
+    st.write("🔄 Attempting to load directives into session state...")
     st.session_state.index, st.session_state.classification_doc = load_all_directives()
+
+# 🚨 Ensure the index is not None before proceeding
+if st.session_state.index is None:
+    st.error("🚨 The document index failed to load. The chatbot cannot function without it. Check the logs for errors.")
+    st.stop()
 
 # ✅ Region & Office Selection UI
 st.title("Welcome to the NWS Directives Chatbot")
@@ -91,7 +108,6 @@ selected_office = st.selectbox(
     index=0 if not st.session_state.user_office else filtered_offices.index(st.session_state.user_office) + 1 if st.session_state.user_office in filtered_offices else 0,
 )
 
-# ✅ Detect if the selection has changed
 if selected_region and selected_region != st.session_state.user_region:
     st.session_state.user_region = selected_region
 
@@ -103,27 +119,28 @@ if st.session_state.user_office:
 if st.session_state.user_region:
     st.write(f"✅ Selected Region: **{st.session_state.user_region}**")
 
-# ✅ Prevent chat from loading until region & office are selected
-if not st.session_state.user_region or not st.session_state.user_office:
-    st.warning("🚨 Please select your NWS Region and Office to continue.")
-    st.stop()
-
 # ✅ Function to retrieve relevant documents at query time
 def get_relevant_documents(query, region):
     """Retrieve only relevant directives for the given query and region."""
-    query_engine = st.session_state.index.as_query_engine()
+    if st.session_state.index is None:
+        st.error("🚨 Error: Document index is missing. Cannot retrieve relevant documents.")
+        return []
 
-    # ✅ Retrieve documents based on user query
-    retrieved_docs = query_engine.query(query)
+    try:
+        query_engine = st.session_state.index.as_query_engine()
+        retrieved_docs = query_engine.query(query)
 
-    # ✅ Filter results to include only the selected region's directives
-    filtered_docs = [doc for doc in retrieved_docs if doc.metadata.get("region", "") == "National" or doc.metadata.get("region", "") == region]
+        filtered_docs = [doc for doc in retrieved_docs if doc.metadata.get("region", "") == "National" or doc.metadata.get("region", "") == region]
 
-    st.write(f"🔍 Retrieved {len(filtered_docs)} relevant documents for {region}")
+        st.write(f"🔍 Retrieved {len(filtered_docs)} relevant documents for {region}")
 
-    return filtered_docs
+        return filtered_docs
 
-# ✅ Function to create the chat engine with a proper system prompt
+    except Exception as e:
+        st.error(f"🚨 Query engine error: {str(e)}")
+        return []
+
+# ✅ Create the LLM chat engine (only once)
 def build_chat_engine():
     """Create the chat engine once at startup and reuse it."""
     system_prompt = f"""
@@ -136,25 +153,16 @@ def build_chat_engine():
 
         Guidelines:
         1. Assume all questions relate to NOAA or the National Weather Service.
-        2. Provide expert interpretation and reasoning.
-        3. Prioritize national directives, add additional context from associated regional supplementals, where appropriate,
-           unless specifically asked about a specific national directive or regional supplemental.
-        3. When citing regional supplementals, ensure the national directive for that series and directive number is also.
+        2. Prioritize national directives over regional supplementals unless specifically asked.
+        3. When citing regional supplementals, ensure the national directive for that series and directive number is also included.
         4. Use precise legal wording as written in the directives (e.g., "will," "shall," "may," "should").
         5. Do not interpret or modify directive language beyond what is explicitly stated.
         6. Always cite the most relevant directive in responses.
         7. Stick strictly to documented facts; do not make assumptions. Do not hallucinate.
     """
 
-    llm = OpenAI(
-        model="gpt-4o",
-        temperature=0.2,
-        system_prompt=system_prompt,
-    )
+    return OpenAI(model="gpt-4o", temperature=0.2, system_prompt=system_prompt)
 
-    return llm
-
-# ✅ Initialize chat engine once
 if "chat_engine" not in st.session_state:
     st.session_state.chat_engine = build_chat_engine()
 
@@ -162,20 +170,16 @@ st.write("---")
 st.title("Chat with the NWS Directives")
 st.write("Ask me a question about the NWS Directives!")
 
-# ✅ Get user input
 if prompt := st.chat_input("Ask a question"):
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-# ✅ Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
-# ✅ Generate response if last message is from user
 if st.session_state.messages[-1]["role"] != "assistant":
     with st.chat_message("assistant"):
         query = st.session_state.messages[-1]["content"]
-        relevant_docs = get_relevant_documents(query, st.session_state.user_region)
         response = st.session_state.chat_engine.chat(query)
         st.write(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
