@@ -22,10 +22,12 @@ if "messages" not in st.session_state:
     st.session_state.messages = [
         {"role": "assistant", "content": "Ask me a question about the NWS Directives!"}
     ]
+if "index" not in st.session_state:
+    st.session_state.index = None  # Store full index of directives
+if "classification_doc" not in st.session_state:
+    st.session_state.classification_doc = None  # Stores the supplemental classification document
 if "chat_engine" not in st.session_state:
-    st.session_state.chat_engine = None
-if "user_selection_changed" not in st.session_state:
-    st.session_state.user_selection_changed = False  # Track if region/office changes
+    st.session_state.chat_engine = None  # Stores the LLM chat engine
 
 # ✅ Ensure OpenAI API key is properly loaded
 if "openai_key" not in st.secrets:
@@ -42,18 +44,31 @@ if not os.path.exists(DIRECTIVES_PATH):
 
 @st.cache_resource(show_spinner=False)
 def load_all_directives():
-    """Load all NWS Directives (National + Regional) at app startup."""
+    """Load all NWS Directives and store classification rules separately."""
     reader = SimpleDirectoryReader(input_dir=DIRECTIVES_PATH, recursive=True)
-    docs = reader.load_data()
+    
+    all_docs = reader.load_data()
 
-    if not docs:
+    # ✅ Ensure classification rules document is loaded first
+    classification_doc = next((doc for doc in all_docs if "pd00101001curr.pdf" in doc.metadata.get("file_path", "")), None)
+
+    if classification_doc:
+        st.write("✅ Classification rules for regional supplementals loaded successfully!")
+    else:
+        st.error("🚨 Could not find 'pd00101001curr.pdf'. Ensure it exists in the directives folder!")
+
+    if not all_docs:
         st.error("🚨 No directive documents found! Please check the 'directives' folder.")
         st.stop()
 
-    return docs  # Store all docs in memory for filtering later
+    # ✅ Build the index once and store it persistently
+    index = VectorStoreIndex.from_documents(all_docs)
 
-# ✅ Load full dataset once
-all_docs = load_all_directives()
+    return index, classification_doc
+
+# ✅ Load directives once and store them
+if "index" not in st.session_state or "classification_doc" not in st.session_state:
+    st.session_state.index, st.session_state.classification_doc = load_all_directives()
 
 # ✅ Region & Office Selection UI
 st.title("Welcome to the NWS Directives Chatbot")
@@ -79,11 +94,9 @@ selected_office = st.selectbox(
 # ✅ Detect if the selection has changed
 if selected_region and selected_region != st.session_state.user_region:
     st.session_state.user_region = selected_region
-    st.session_state.user_selection_changed = True
 
 if selected_office and selected_office != st.session_state.user_office:
     st.session_state.user_office = selected_office
-    st.session_state.user_selection_changed = True
 
 if st.session_state.user_office:
     st.write(f"✅ Selected Office: **{st.session_state.user_office}**")
@@ -95,71 +108,55 @@ if not st.session_state.user_region or not st.session_state.user_office:
     st.warning("🚨 Please select your NWS Region and Office to continue.")
     st.stop()
 
-# ✅ Function to filter relevant directives
-def get_filtered_documents(region):
-    """Return only national directives + regional supplementals for the selected region."""
-    national_docs = [doc for doc in all_docs if "National" in doc.metadata.get("region", "")]
-    regional_docs = [doc for doc in all_docs if region in doc.metadata.get("region", "")]
+# ✅ Function to retrieve relevant documents at query time
+def get_relevant_documents(query, region):
+    """Retrieve only relevant directives for the given query and region."""
+    query_engine = st.session_state.index.as_query_engine()
 
-    # ✅ Debugging output
-    st.write(f"📄 Loaded {len(national_docs)} national directives and {len(regional_docs)} regional directives for {region}")
+    # ✅ Retrieve documents based on user query
+    retrieved_docs = query_engine.query(query)
 
-    if not regional_docs:
-        st.warning(f"⚠️ No region-specific directives found for **{region}**. Using only national directives.")
+    # ✅ Filter results to include only the selected region's directives
+    filtered_docs = [doc for doc in retrieved_docs if doc.metadata.get("region", "") == "National" or doc.metadata.get("region", "") == region]
 
-    return national_docs + regional_docs  # Ensure national directives are always included
+    st.write(f"🔍 Retrieved {len(filtered_docs)} relevant documents for {region}")
 
-# ✅ Function to build chat engine with the correct system prompt
-def build_chat_engine(region, office):
-    """Create a new chat engine with the correct system prompt when the region/office changes."""
-    filtered_docs = get_filtered_documents(region)
+    return filtered_docs
 
-    if not filtered_docs:
-        st.error("🚨 No documents found! Chat engine cannot be built.")
-        st.stop()
-
-    # ✅ Debugging output
-    st.write(f"🔍 Chat engine is being built with {len(filtered_docs)} documents for {office}")
-
-    # ✅ Define system prompt in a clean, structured format
+# ✅ Function to create the chat engine with a proper system prompt
+def build_chat_engine():
+    """Create the chat engine once at startup and reuse it."""
     system_prompt = f"""
         You are an expert on the NOAA National Weather Service (NWS) Directives. Your role is to provide
         accurate and detailed answers based strictly on official NWS and NOAA directives.
 
-        You are assisting users from {region}, specifically {office}. Your answers must be relevant to their
-        region and office.
+        You understand the classification rules for regional supplementals as defined in the document 
+        'pd00101001curr.pdf'. Use these rules to determine which regional directives apply to {st.session_state.user_region}, in 
+        addition to always considering national directives.
 
         Guidelines:
         1. Assume all questions relate to NOAA or the National Weather Service.
-        2. Prioritize national directives, add additional context from associated regional supplementals unless 
-           specifically asked about the national directive or regional supplemental.
-        3. When citing regional supplementals, ensure they belong to the same series and number as the 
-           relevant national directive.
+        2. Provide expert interpretation and reasoning.
+        3. Prioritize national directives, add additional context from associated regional supplementals, where appropriate,
+           unless specifically asked about a specific national directive or regional supplemental.
+        3. When citing regional supplementals, ensure the national directive for that series and directive number is also.
         4. Use precise legal wording as written in the directives (e.g., "will," "shall," "may," "should").
         5. Do not interpret or modify directive language beyond what is explicitly stated.
         6. Always cite the most relevant directive in responses.
         7. Stick strictly to documented facts; do not make assumptions. Do not hallucinate.
     """
 
-    # ✅ Create a NEW OpenAI object with the corrected system prompt
     llm = OpenAI(
         model="gpt-4o",
         temperature=0.2,
         system_prompt=system_prompt,
     )
 
-    return VectorStoreIndex.from_documents(filtered_docs).as_chat_engine(
-        llm=llm,
-        chat_mode="condense_question",
-        verbose=True,
-        streaming=True,
-        return_source_nodes=True,
-    )
+    return llm
 
-# ✅ Force system prompt update when region/office changes
-if "chat_engine" not in st.session_state or st.session_state.user_selection_changed:
-    st.session_state.chat_engine = build_chat_engine(st.session_state.user_region, st.session_state.user_office)
-    st.session_state.user_selection_changed = False  # Reset flag
+# ✅ Initialize chat engine once
+if "chat_engine" not in st.session_state:
+    st.session_state.chat_engine = build_chat_engine()
 
 st.write("---")
 st.title("Chat with the NWS Directives")
@@ -177,11 +174,8 @@ for message in st.session_state.messages:
 # ✅ Generate response if last message is from user
 if st.session_state.messages[-1]["role"] != "assistant":
     with st.chat_message("assistant"):
-        response_stream = st.session_state.chat_engine.stream_chat(prompt)
-        response_text = "".join(response_stream.response_gen).strip()
-
-        if not response_text:
-            response_text = "⚠️ Sorry, I couldn't find relevant information. Try rewording your question."
-
-        st.write(response_text)
-        st.session_state.messages.append({"role": "assistant", "content": response_text})
+        query = st.session_state.messages[-1]["content"]
+        relevant_docs = get_relevant_documents(query, st.session_state.user_region)
+        response = st.session_state.chat_engine.chat(query)
+        st.write(response)
+        st.session_state.messages.append({"role": "assistant", "content": response})
