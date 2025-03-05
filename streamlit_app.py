@@ -48,27 +48,11 @@ def load_all_directives():
     st.write("🔄 Loading all NWS Directives...")
 
     try:
-        if not os.path.exists(DIRECTIVES_PATH):
-            st.error(f"🚨 The directives folder `{DIRECTIVES_PATH}` does not exist!")
-            return None, None
-
-        # ✅ List all files
-        try:
-            files = os.listdir(DIRECTIVES_PATH)
-            if not files:
-                st.error("🚨 The directives folder is empty!")
-                return None, None
-            st.write(f"📂 Found {len(files)} files in `{DIRECTIVES_PATH}`.")
-        except Exception as e:
-            st.error(f"🚨 Failed to list files in `{DIRECTIVES_PATH}`: {str(e)}")
-            return None, None
-
-        # ✅ Load all documents
         reader = SimpleDirectoryReader(input_dir=DIRECTIVES_PATH, recursive=True)
         all_docs = reader.load_data()
 
         if not all_docs:
-            st.error("🚨 No directive documents were successfully loaded! Please check file format.")
+            st.error("🚨 No directive documents found! Please check the 'directives' folder.")
             return None, None
 
         st.write(f"📄 Successfully loaded {len(all_docs)} directive documents.")
